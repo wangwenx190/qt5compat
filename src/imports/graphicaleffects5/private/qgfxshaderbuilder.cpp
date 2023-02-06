@@ -23,27 +23,39 @@
 QT_BEGIN_NAMESPACE
 
 #ifndef GL_MAX_VARYING_COMPONENTS
-#define GL_MAX_VARYING_COMPONENTS 0x8B4B
+#  define GL_MAX_VARYING_COMPONENTS (0x8B4B)
 #endif
 
 #ifndef GL_MAX_VARYING_FLOATS
-#define GL_MAX_VARYING_FLOATS 0x8B4B
+#  define GL_MAX_VARYING_FLOATS (0x8B4B)
 #endif
 
 #ifndef GL_MAX_VARYING_VECTORS
-#define GL_MAX_VARYING_VECTORS 0x8DFC
+#  define GL_MAX_VARYING_VECTORS (0x8DFC)
 #endif
 
-#if !defined(QT5COMPAT_MAX_BLUR_SAMPLES)
-#define QT5COMPAT_MAX_BLUR_SAMPLES 15 // Conservative estimate for maximum varying vectors in
-                                      // shaders (maximum 60 components on some Metal
-                                      // implementations, hence 15 vectors of 4 components each)
-#elif !defined(QT5COMPAT_MAX_BLUR_SAMPLES_GL)
-#define QT5COMPAT_MAX_BLUR_SAMPLES_GL QT5COMPAT_MAX_BLUR_SAMPLES
+#ifndef QT5COMPAT_MAX_BLUR_SAMPLES_GL
+#  define QT5COMPAT_MAX_BLUR_SAMPLES_GL (8) // Minimum number of varyings in the ES 2.0 spec.
+                                            // We'll get the most appropriate value through OpenGL
+                                            // APIs, so the value here doesn't quite matter.
 #endif
 
-#if !defined(QT5COMPAT_MAX_BLUR_SAMPLES_GL)
-#define QT5COMPAT_MAX_BLUR_SAMPLES_GL 8 // minimum number of varyings in the ES 2.0 spec.
+#ifndef QT5COMPAT_MAX_BLUR_SAMPLES_VK
+#  define QT5COMPAT_MAX_BLUR_SAMPLES_VK (32) // Tested on Windows. Any numbers greater than it will crash.
+#endif
+
+#ifndef QT5COMPAT_MAX_BLUR_SAMPLES_METAL
+#  define QT5COMPAT_MAX_BLUR_SAMPLES_METAL (15) // Conservative estimate for maximum varying vectors in
+                                                // shaders (maximum 60 components on some Metal
+                                                // implementations, hence 15 vectors of 4 components each)
+#endif
+
+#ifndef QT5COMPAT_MAX_BLUR_SAMPLES_D3D
+#  define QT5COMPAT_MAX_BLUR_SAMPLES_D3D (62) // Tested. Any numbers greater than it will crash.
+#endif
+
+#ifndef QT5COMPAT_MAX_BLUR_SAMPLES
+#  define QT5COMPAT_MAX_BLUR_SAMPLES (10) // A minimal value that all backends can accept.
 #endif
 
 QGfxShaderBuilder::QGfxShaderBuilder()
@@ -62,17 +74,17 @@ QGfxShaderBuilder::QGfxShaderBuilder()
     m_shaderBaker.setGeneratedShaderVariants({ QShader::StandardShader,
                                                QShader::BatchableVertexShader });
 
-#ifndef QT_NO_OPENGL
-    QSGRendererInterface::GraphicsApi graphicsApi = QQuickWindow::graphicsApi();
-    if (graphicsApi == QSGRendererInterface::OpenGL) {
+    switch (QQuickWindow::graphicsApi()) {
+#if QT_CONFIG(opengl)
+    case QSGRendererInterface::OpenGL: {
         // The following code makes the assumption that an OpenGL context the GUI
         // thread will get the same capabilities as the render thread's OpenGL
         // context. Not 100% accurate, but it works...
         QOpenGLContext context;
         if (!context.create()) {
-            qDebug() << "failed to acquire GL context to resolve capabilities, using defaults..";
+            qWarning() << "QGfxShaderBuilder: Failed to acquire GL context to resolve capabilities, using defaults..";
             m_maxBlurSamples = QT5COMPAT_MAX_BLUR_SAMPLES_GL;
-            return;
+            break;
         }
 
         QOffscreenSurface surface;
@@ -101,12 +113,34 @@ QGfxShaderBuilder::QGfxShaderBuilder()
             else
                 context.doneCurrent();
         } else {
-            qDebug() << "QGfxShaderBuilder: Failed to acquire GL context to resolve capabilities, using defaults.";
+            qWarning() << "QGfxShaderBuilder: Failed to acquire GL context to resolve capabilities, using defaults.";
             m_maxBlurSamples = QT5COMPAT_MAX_BLUR_SAMPLES_GL;
         }
-    } else
-#endif
-    m_maxBlurSamples = QT5COMPAT_MAX_BLUR_SAMPLES;
+        break;
+    }
+#endif // QT_CONFIG(opengl)
+#if QT_CONFIG(vulkan)
+    case QSGRendererInterface::Vulkan:
+        m_maxBlurSamples = QT5COMPAT_MAX_BLUR_SAMPLES_VK;
+        break;
+#endif // QT_CONFIG(vulkan)
+#ifdef Q_OS_MACOS
+    case QSGRendererInterface::Metal:
+        m_maxBlurSamples = QT5COMPAT_MAX_BLUR_SAMPLES_METAL;
+        break;
+#endif // Q_OS_MACOS
+#ifdef Q_OS_WINDOWS
+#  if (QT_VERSION >= QT_VERSION_CHECK(6, 6, 0))
+    case QSGRendererInterface::Direct3D12:
+#  endif // QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    case QSGRendererInterface::Direct3D11:
+        m_maxBlurSamples = QT5COMPAT_MAX_BLUR_SAMPLES_D3D;
+        break;
+#endif // Q_OS_WINDOWS
+    default:
+        m_maxBlurSamples = QT5COMPAT_MAX_BLUR_SAMPLES;
+        break;
+    }
 }
 
 QGfxShaderBuilder::~QGfxShaderBuilder()
